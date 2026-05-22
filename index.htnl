@@ -1,1 +1,127 @@
-a
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>NEON DRIVE - MULTIPLAYER</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- মেইন কন্টেইনার যা পুরো স্ক্রিন কভার করবে -->
+    <div id="app-wrapper">
+        
+        <!-- ওপরের অংশ: গেমের মূল স্ক্রিন (৪৮০ x ৮৫০ রেশিও ফিক্সড) -->
+        <div id="game-screen-area">
+            <div id="hud">
+                <div class="hud-top">
+                    <div class="hud-item"><div class="hud-label">SCORE</div><div id="score-txt" class="hud-val">00000</div></div>
+                    <div class="hud-item" style="text-align: center;"><div class="hud-label">TIME LEFT</div><div id="timer-txt" class="hud-val" style="color: #ffea00;">60s</div></div>
+                    <div class="hud-item" style="text-align: right;"><div class="hud-label">SPEED</div><div id="speed-txt" class="hud-val">0 KMH</div></div>
+                </div>
+                
+                <div id="distance-tracker">
+                    <div class="tracker-label" style="display: flex; justify-content: space-between;">
+                        <span>RACE PROGRESS</span>
+                        <span id="km-txt" style="color: #00ff66;">0.00 KM</span>
+                    </div>
+                    <div class="tracker-bg" id="tracker-lanes"></div>
+                </div>
+
+                <div class="nitro-container">
+                    <div class="nitro-title">NITRO</div>
+                    <div class="nitro-bar-bg"><div id="nitro-bar-fill" class="nitro-bar-fill"></div></div>
+                    <div id="nitro-percent-txt" class="nitro-percent">0%</div>
+                </div>
+            </div>
+
+            <!-- ওভারলে স্ক্রিনসমূহ (ক্যানভাসের ওপরেই থাকবে) -->
+            <div id="start-screen" class="overlay">
+                <h1>NEON DRIVE</h1>
+                <div class="subtitle">MULTIPLAYER EDITION</div>
+                
+                <div class="lobby-box">
+                    <div class="slot-title">CREATE A NEW RACE</div>
+                    <input type="text" id="host-name" class="lobby-input" placeholder="Enter Host Name" autocomplete="off">
+                    <button class="btn-main" onclick="createRoom()">CREATE ROOM</button>
+                </div>
+                
+                <div class="subtitle" style="margin: 5px 0;">- OR -</div>
+                
+                <div class="lobby-box">
+                    <div class="slot-title">JOIN EXISTING RACE</div>
+                    <input type="text" id="joiner-name" class="lobby-input" placeholder="Enter Player Name" autocomplete="off">
+                    <input type="text" id="room-code-input" class="lobby-input" placeholder="4-Digit Room Code" autocomplete="off" style="margin-top: 8px;">
+                    <button class="btn-main btn-join" onclick="joinRoom()">JOIN ROOM</button>
+                </div>
+                
+                <button class="btn-small" onclick="playSolo()" style="margin-top: 10px;">Play Solo Practice</button>
+                <div class="page-footer">was designed by imrul hasan, credit: Gemini</div>
+            </div>
+
+            <div id="waiting-screen" class="overlay hidden">
+                <h1>ROOM CODE: <span id="display-room-code" style="color:#00ff66;"></span></h1>
+                <div class="subtitle" style="margin-bottom:10px;">WAITING FOR DRIVERS...</div>
+                
+                <div class="lobby-box" style="text-align: left; height: 120px; overflow-y: auto;">
+                    <ul id="players-list" style="list-style:none; color: #fff; font-size:1.1rem; line-height:1.8;"></ul>
+                </div>
+
+                <div class="lobby-box" style="text-align: left; height: 150px; display: flex; flex-direction: column;">
+                    <div id="chat-messages" style="flex-grow: 1; overflow-y: auto; color: #00f0ff; font-size: 0.9rem; margin-bottom: 8px; padding-right: 5px;"></div>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="chat-input" placeholder="Type a message..." style="flex-grow: 1; padding: 8px; border-radius: 4px; border: 1px solid #333; background: #000; color: #fff; font-size: 0.85rem;">
+                        <button onclick="sendChatMessage()" style="padding: 8px 15px; border-radius: 4px; border: none; background: #00f0ff; color: #000; font-weight: bold; cursor: pointer; font-size: 0.85rem;">SEND</button>
+                    </div>
+                </div>
+
+                <button id="btn-start" class="btn-main btn-start-game" onclick="startMultiplayerGame()" style="display:none;">START RACE</button>
+                <div id="waiting-msg" style="color: #00f0ff; margin-top:15px; font-weight:bold;">Waiting for host to start...</div>
+                <div class="page-footer">was designed by imrul hasan, credit: Gemini</div>
+            </div>
+
+            <div id="gameover-screen" class="overlay hidden">
+                <h1 id="gameover-title" style="background: linear-gradient(45deg, #00ff66, #ffea00); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">RACE FINISHED</h1>
+                <div class="subtitle" id="final-score-lbl">FINAL SCORE: 0</div>
+                
+                <div class="lobby-box" id="leaderboard-box" style="display:none; text-align: left;">
+                    <div class="slot-title" style="color:#ffea00; margin-bottom: 10px; text-align: center;">🏁 FINAL STANDINGS 🏁</div>
+                    <ol id="leaderboard-list" style="padding-left: 20px; color: #fff; font-size: 1.1rem; line-height: 1.8;"></ol>
+                </div>
+
+                <div class="button-group" style="justify-content: center;">
+                    <button class="btn-main" onclick="backToLobby()" style="width: auto; padding: 12px 40px;">BACK TO LOBBY</button>
+                </div>
+                <div class="page-footer">was designed by imrul hasan, credit: Gemini</div>
+            </div>
+
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <!-- নিচের অংশ: ডেডিকেটেড সাইবারপাঙ্ক স্টাইল কন্ট্রোল ডেক -->
+        <div id="control-deck">
+            <div id="shoot-btn-left" class="shoot-btn empty">
+                <div class="btn-title">SHOOT</div>
+                <div class="ammo-count">0 B</div>
+            </div>
+            
+            <!-- ৩ লাইনের গ্রিডসহ নতুন স্কয়ার ড্র্যাগ-প্যাড -->
+            <div id="pad-container">
+                <div class="pad-line horizontal"></div>
+                <div class="pad-line vertical"></div>
+                <div id="pad-center-mark"></div>
+                <div id="pad-knob"></div>
+            </div>
+            
+            <div id="shoot-btn-right" class="shoot-btn empty">
+                <div class="btn-title">SHOOT</div>
+                <div class="ammo-count">0 B</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
