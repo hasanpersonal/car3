@@ -23,41 +23,171 @@ let isMultiplayer = false;
 
 let gameActive = false;
 let score = 0, speed = 0, targetSpeed = 0;
-let nitro = 0, bullets = 0; 
+let nitro = 0, bullets = 0;
 let isNitro = false;
-let screenShake = 0, roadOffset = 0, screenFlash = 0; 
+let screenShake = 0, roadOffset = 0, screenFlash = 0;
 let player;
 let enemies = [], stars = [], activeBullets = [], particles = [];
 
-let raceTimeLeft = 60; 
+let raceTimeLeft = 60;
 let timerInterval = null;
 
+// ─── CANVAS SETUP ───
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const gameWidth = 480;
-const gameHeight = 850;
-canvas.width = gameWidth;
+const gameWidth  = 480;
+const gameHeight = 640;   // tighter height for the new viewport ratio
+canvas.width  = gameWidth;
 canvas.height = gameHeight;
 
 const hud = document.getElementById('hud');
-const btnLeft = document.getElementById('shoot-btn-left');
-const btnRight = document.getElementById('shoot-btn-right');
 
-// নতুন স্কয়ার ড্র্যাগ-প্যাড এলিমেন্টসমূহ
-const padContainer = document.getElementById('pad-container');
-const padKnob = document.getElementById('pad-knob');
+// ─── NEW TRACKPAD CONTROLLER ───
+const trackpad  = document.getElementById('trackpad');
+const puck      = document.getElementById('ctrl-puck');
+const ammoTxt   = document.getElementById('ammo-count-txt');
+const shootBtn  = document.getElementById('shoot-btn');
 
-let padActive = false, padTouchId = null;
-let padDX = 0, padDY = 0;
-const padMaxRange = 45; // স্কয়ার বাউন্ডারির সর্বোচ্চ রেঞ্জ
-let lastTapTime = 0; 
+let tpActive = false, tpTouchId = null;
+let tpCenterX = 0, tpCenterY = 0;
+let tpDX = 0, tpDY = 0;
+const TP_RADIUS = 55; // max puck travel (px)
+
+function getTrackpadCenter() {
+    const r = trackpad.getBoundingClientRect();
+    tpCenterX = r.left + r.width  / 2;
+    tpCenterY = r.top  + r.height / 2;
+}
+
+trackpad.addEventListener('touchstart', (e) => {
+    if (!gameActive) return;
+    e.preventDefault();
+    if (tpActive) return;
+    const t = e.changedTouches[0];
+    tpActive  = true;
+    tpTouchId = t.identifier;
+    getTrackpadCenter();
+    movePuck(t.clientX, t.clientY);
+}, { passive: false });
+
+trackpad.addEventListener('touchmove', (e) => {
+    if (!tpActive) return;
+    e.preventDefault();
+    for (let i = 0; i < e.touches.length; i++) {
+        if (e.touches[i].identifier === tpTouchId) {
+            movePuck(e.touches[i].clientX, e.touches[i].clientY);
+            break;
+        }
+    }
+}, { passive: false });
+
+trackpad.addEventListener('touchend', (e) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === tpTouchId) {
+            tpActive = false; tpTouchId = null;
+            tpDX = 0; tpDY = 0;
+            resetPuck();
+            break;
+        }
+    }
+}, { passive: false });
+
+trackpad.addEventListener('touchcancel', () => {
+    tpActive = false; tpTouchId = null;
+    tpDX = 0; tpDY = 0;
+    resetPuck();
+});
+
+function movePuck(cx, cy) {
+    let dx = cx - tpCenterX;
+    let dy = cy - tpCenterY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist > TP_RADIUS) {
+        dx = (dx / dist) * TP_RADIUS;
+        dy = (dy / dist) * TP_RADIUS;
+    }
+    tpDX = dx; tpDY = dy;
+
+    // Move the puck visually (offset from its center which is already at 50%,50% via CSS)
+    puck.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+    // Direction classes for arrow highlights
+    trackpad.classList.toggle('pressing-up',    dy < -14);
+    trackpad.classList.toggle('pressing-down',  dy >  14);
+    trackpad.classList.toggle('pressing-left',  dx < -14);
+    trackpad.classList.toggle('pressing-right', dx >  14);
+
+    // Nitro glow on puck
+    puck.classList.toggle('nitro-active', dy < -14 && nitro > 0);
+}
+
+function resetPuck() {
+    puck.style.transform = 'translate(-50%, -50%)';
+    trackpad.classList.remove('pressing-up','pressing-down','pressing-left','pressing-right');
+    puck.classList.remove('nitro-active');
+}
+
+// ─── KEYBOARD FALLBACK ───
+const keys = { a: false, d: false, w: false, s: false };
+window.addEventListener('keydown', e => {
+    if (e.key === 'a' || e.key === 'ArrowLeft')  keys.a = true;
+    if (e.key === 'd' || e.key === 'ArrowRight') keys.d = true;
+    if (e.key === 'w' || e.key === 'ArrowUp')   keys.w = true;
+    if (e.key === 's' || e.key === 'ArrowDown') keys.s = true;
+    if (e.code === 'Space') { shootBullet(); e.preventDefault(); }
+});
+window.addEventListener('keyup', e => {
+    if (e.key === 'a' || e.key === 'ArrowLeft')  keys.a = false;
+    if (e.key === 'd' || e.key === 'ArrowRight') keys.d = false;
+    if (e.key === 'w' || e.key === 'ArrowUp')   keys.w = false;
+    if (e.key === 's' || e.key === 'ArrowDown') keys.s = false;
+});
+
+// Shoot button
+shootBtn.addEventListener('touchstart', (e) => {
+    shootBullet();
+    e.preventDefault();
+    e.stopPropagation();
+}, { passive: false });
+
+// ─── AUDIO ───
 let audioCtx, engineOsc, engineGain;
 
-// --- MULTIPLAYER ROOM SYSTEMS ---
+function setupAudio() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    engineOsc = audioCtx.createOscillator();
+    engineGain = audioCtx.createGain();
+    engineOsc.type = 'sawtooth';
+    engineOsc.frequency.setValueAtTime(40, audioCtx.currentTime);
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(180, audioCtx.currentTime);
+    engineOsc.connect(filter);
+    filter.connect(engineGain);
+    engineGain.connect(audioCtx.destination);
+    engineGain.gain.setValueAtTime(0.015, audioCtx.currentTime);
+    engineOsc.start(0);
+}
+
+function playSfx(freq, type, dur, vol) {
+    if (!audioCtx) return;
+    const osc  = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + dur);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + dur);
+}
+
+// ─── MULTIPLAYER ───
 function createRoom() {
     myName = document.getElementById('host-name').value.trim();
-    if(!myName) return alert("Enter Host Name!");
-    
+    if (!myName) return alert("Enter Host Name!");
     currentRoom = Math.floor(1000 + Math.random() * 9000).toString();
     isHost = true;
     isMultiplayer = true;
@@ -72,7 +202,6 @@ function createRoom() {
         document.getElementById('display-room-code').innerText = currentRoom;
         document.getElementById('btn-start').style.display = 'inline-block';
         document.getElementById('waiting-msg').style.display = 'none';
-        
         document.getElementById('start-screen').classList.add('hidden');
         document.getElementById('waiting-screen').classList.remove('hidden');
         listenToRoom();
@@ -82,15 +211,14 @@ function createRoom() {
 function joinRoom() {
     myName = document.getElementById('joiner-name').value.trim();
     currentRoom = document.getElementById('room-code-input').value.trim();
-    if(!myName || !currentRoom) return alert("Enter Player Name and Room Code!");
+    if (!myName || !currentRoom) return alert("Enter Player Name and Room Code!");
     isMultiplayer = true;
 
-    database.ref('car_rooms/' + currentRoom).once('value', snapshot => {
-        if(!snapshot.exists()) return alert("Room not found!");
-        if(snapshot.val().status !== "waiting") return alert("Game already running/ended!");
-        
-        let c = ['#a200ff', '#ff00aa', '#ffea00', '#00ff66'][Math.floor(Math.random()*4)];
-        
+    database.ref('car_rooms/' + currentRoom).once('value', snap => {
+        if (!snap.exists()) return alert("Room not found!");
+        if (snap.val().status !== "waiting") return alert("Game already running/ended!");
+
+        const c = ['#a200ff','#ff00aa','#ffea00','#00ff66'][Math.floor(Math.random()*4)];
         database.ref('car_rooms/' + currentRoom + '/players/' + myId).set({
             name: myName, score: 0, x: gameWidth/2, color: c
         }).then(() => {
@@ -103,9 +231,9 @@ function joinRoom() {
 }
 
 function listenToRoom() {
-    database.ref('car_rooms/' + currentRoom).on('value', snapshot => {
-        const data = snapshot.val();
-        if(!data) return;
+    database.ref('car_rooms/' + currentRoom).on('value', snap => {
+        const data = snap.val();
+        if (!data) return;
 
         if (data.status === "waiting") {
             document.getElementById('gameover-screen').classList.add('hidden');
@@ -115,7 +243,7 @@ function listenToRoom() {
             const list = document.getElementById('players-list');
             list.innerHTML = "";
             Object.keys(data.players).forEach(pid => {
-                let li = document.createElement('li');
+                const li = document.createElement('li');
                 li.innerText = "🏎️ " + data.players[pid].name + (pid === data.hostId ? " (Host)" : "");
                 list.appendChild(li);
             });
@@ -124,24 +252,21 @@ function listenToRoom() {
             chatBox.innerHTML = "";
             if (data.chats) {
                 Object.keys(data.chats).forEach(msgId => {
-                    let msg = data.chats[msgId];
-                    let p = document.createElement('p');
-                    p.style.marginBottom = "4px";
+                    const msg = data.chats[msgId];
+                    const p = document.createElement('p');
                     p.innerHTML = `<strong style="color:#ff0055;">${msg.sender}:</strong> <span style="color:#fff;">${msg.text}</span>`;
                     chatBox.appendChild(p);
                 });
                 chatBox.scrollTop = chatBox.scrollHeight;
             }
-        } 
-        else if (data.status === "playing" && !gameActive) {
-            initGame();
+        } else if (data.status === "playing" && !gameActive) {
+            initGameAndFullscreen();
         }
-        
-        if(data.players) {
+
+        if (data.players) {
             opponentsData = data.players;
             updateDistanceTrackerUI();
-            
-            if(data.status === "finished" && !gameActive) {
+            if (data.status === "finished" && !gameActive) {
                 showFinalLeaderboard();
             }
         }
@@ -156,59 +281,54 @@ function sendChatMessage() {
     const input = document.getElementById('chat-input');
     const msgText = input.value.trim();
     if (!msgText) return;
-
     database.ref('car_rooms/' + currentRoom + '/chats').push({
-        sender: myName,
-        text: msgText,
-        timestamp: Date.now()
+        sender: myName, text: msgText, timestamp: Date.now()
     });
     input.value = "";
 }
 
 function startMultiplayerGame() {
     let updates = { status: "playing" };
-    Object.keys(opponentsData).forEach(id => {
-        updates[`players/${id}/score`] = 0;
-    });
+    Object.keys(opponentsData).forEach(id => { updates[`players/${id}/score`] = 0; });
     database.ref('car_rooms/' + currentRoom).update(updates);
 }
 
 function playSolo() {
     isMultiplayer = false;
-    initGame();
+    initGameAndFullscreen();
 }
 
 function updateDistanceTrackerUI() {
     if (!opponentsData) return;
     const laneBg = document.getElementById('tracker-lanes');
     laneBg.innerHTML = "";
-    
+
     if (opponentsData[myId]) {
-        let myKM = (opponentsData[myId].score / 1000).toFixed(2);
-        const kmTxtEl = document.getElementById('km-txt');
-        if(kmTxtEl) kmTxtEl.innerText = `${myKM} KM`;
+        const myKM = (opponentsData[myId].score / 1000).toFixed(2);
+        const kmEl = document.getElementById('km-txt');
+        if (kmEl) kmEl.innerText = `${myKM} KM`;
     }
 
-    let scores = Object.keys(opponentsData).map(id => opponentsData[id].score);
-    let maxScore = Math.max(...scores, 1000); 
+    const scores = Object.keys(opponentsData).map(id => opponentsData[id].score);
+    const maxScore = Math.max(...scores, 1000);
 
     Object.keys(opponentsData).forEach(id => {
-        let p = opponentsData[id];
-        let playerKM = (p.score / 1000).toFixed(2);
-        
-        let dot = document.createElement('div');
+        const p = opponentsData[id];
+        const pKM = (p.score / 1000).toFixed(2);
+        const dot = document.createElement('div');
         dot.className = "player-progress-dot";
         dot.style.color = p.color || '#00f0ff';
         dot.style.backgroundColor = p.color || '#00f0ff';
-        
-        let progressPercent = (p.score / maxScore) * 85; 
-        dot.style.left = `${progressPercent}%`;
-        
+        const pct = (p.score / maxScore) * 82;
+        dot.style.left = `${pct}%`;
+        dot.innerHTML = `<span style="position:absolute;top:-18px;left:-10px;font-size:8px;color:#fff;white-space:nowrap;background:rgba(0,0,0,0.8);padding:1px 4px;border-radius:3px;border:1px solid ${p.color||'#00f0ff'}">${p.name.substring(0,3)}:${pKM}K</span>`;
         laneBg.appendChild(dot);
     });
 }
 
-function initGame() {
+function initGameAndFullscreen() {
+    const container = document.getElementById('game-viewport');
+    if (container.requestFullscreen) container.requestFullscreen().catch(() => {});
     setupAudio();
     document.getElementById('start-screen').classList.add('hidden');
     document.getElementById('waiting-screen').classList.add('hidden');
@@ -216,221 +336,26 @@ function initGame() {
     restartGame();
 }
 
-function setupAudio() {
-    if(audioCtx) return;
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    engineOsc = audioCtx.createOscillator();
-    engineGain = audioCtx.createGain();
-    engineOsc.type = 'sawtooth';
-    engineOsc.frequency.setValueAtTime(40, audioCtx.currentTime);
-    
-    let filter = audioCtx.createBiquadFilter();
-    filter.type = 'lowpass'; filter.frequency.setValueAtTime(180, audioCtx.currentTime);
-    engineOsc.connect(filter); filter.connect(engineGain); engineGain.connect(audioCtx.destination);
-    engineGain.gain.setValueAtTime(0.015, audioCtx.currentTime); engineOsc.start(0);
-}
-
-function playSfx(freq, type, dur, vol) {
-    if(!audioCtx) return;
-    let osc = audioCtx.createOscillator(); let gain = audioCtx.createGain();
-    osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    gain.gain.setValueAtTime(vol, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + dur);
-    osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + dur);
-}
-
-// --- আপডেটেড স্কয়ার ট্র্যাকপ্যাড কন্ট্রোল লজিক ---
-padContainer.addEventListener('touchstart', (e) => {
-    if (!gameActive) return;
-    let touch = e.changedTouches[0];
-    padActive = true;
-    padTouchId = touch.identifier;
-    handlePadMove(touch);
-});
-
-padContainer.addEventListener('touchmove', (e) => {
-    if (!padActive) return;
-    for (let i = 0; i < e.touches.length; i++) {
-        if (e.touches[i].identifier === padTouchId) {
-            handlePadMove(e.touches[i]);
-            e.preventDefault();
-            break;
-        }
-    }
-});
-
-function handlePadMove(touch) {
-    const rect = padContainer.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    
-    // সেন্টার থেকে দূরত্বের হিসাব
-    padDX = touch.clientX - centerX;
-    padDY = touch.clientY - centerY;
-    
-    // স্কয়ার বাউন্ডারির মধ্যে লক করা (-padMaxRange থেকে +padMaxRange)
-    padDX = Math.max(-padMaxRange, Math.min(padMaxRange, padDX));
-    padDY = Math.max(-padMaxRange, Math.min(padMaxRange, padDY));
-    
-    // নব পজিশন আপডেট করা
-    padKnob.style.transform = `translate(${padDX}px, ${padDY}px)`;
-}
-
-padContainer.addEventListener('touchend', (e) => {
-    resetPad();
-});
-padContainer.addEventListener('touchcancel', (e) => {
-    resetPad();
-});
-
-function resetPad() {
-    padActive = false;
-    padTouchId = null;
-    padDX = 0;
-    padDY = 0;
-    padKnob.style.transform = 'translate(0px, 0px)';
-}
-
-// স্ক্রিন ডাবল ট্যাপ আলটিমেট বোম্ব লজিক (এখন ক্যানভাসে কাজ করবে)
-canvas.addEventListener('touchstart', (e) => {
-    if (!gameActive) return;
-    let currentTime = new Date().getTime();
-    let tapLength = currentTime - lastTapTime;
-    
-    if (tapLength < 300 && tapLength > 0 && bullets >= 10) {
-        bullets -= 10; updateAmmoUI();
-        enemies.forEach(en => {
-            for(let k=0; k<25; k++) particles.push(new Particle(en.x + en.w/2, en.y + en.h/2, '#ff0055', (Math.random()-0.5)*12, Math.random()*5+2));
-            score += 100;
-        });
-        enemies = []; playSfx(150, 'square', 0.6, 0.6); screenShake = 30; screenFlash = 1.0; lastTapTime = 0; e.preventDefault(); return; 
-    }
-    lastTapTime = currentTime;
-});
-
-// ডেস্কটপ কিবোর্ড কন্ট্রোল
-const keys = { a: false, d: false, w: false, s: false };
-window.addEventListener('keydown', e => {
-    if(e.key === 'a' || e.key === 'ArrowLeft') keys.a = true;
-    if(e.key === 'd' || e.key === 'ArrowRight') keys.d = true;
-    if(e.key === 'w' || e.key === 'ArrowUp') keys.w = true;
-    if(e.key === 's' || e.key === 'ArrowDown') keys.s = true;
-    if(e.code === 'Space') { shootBullet(); e.preventDefault(); }
-});
-window.addEventListener('keyup', e => {
-    if(e.key === 'a' || e.key === 'ArrowLeft') keys.a = false;
-    if(e.key === 'd' || e.key === 'ArrowRight') keys.d = false;
-    if(e.key === 'w' || e.key === 'ArrowUp') keys.w = false;
-    if(e.key === 's' || e.key === 'ArrowDown') keys.s = false;
-});
-
-btnLeft.addEventListener('touchstart', (e) => { shootBullet(); e.preventDefault(); e.stopPropagation(); });
-btnRight.addEventListener('touchstart', (e) => { shootBullet(); e.preventDefault(); e.stopPropagation(); });
-
-function shootBullet() {
-    if(!gameActive || bullets <= 0) return;
-    bullets--; playSfx(600, 'triangle', 0.15, 0.3);
-    activeBullets.push({ x: player.x + player.w / 2, y: player.y, w: 6, h: 22 });
-    updateAmmoUI();
-}
-
-function updateAmmoUI() {
-    document.querySelectorAll('.ammo-count').forEach(c => c.innerText = `${bullets} B`);
-    document.querySelectorAll('.shoot-btn').forEach(b => bullets <= 0 ? b.classList.add('empty') : b.classList.remove('empty'));
-}
-
-class Player {
-    constructor() {
-        this.w = 44; this.h = 85;
-        this.x = gameWidth / 2 - this.w / 2;
-        this.y = gameHeight - 160; 
-        this.vx = 0; this.angle = 0;
-    }
-    update() {
-        // নতুন স্কয়ার প্যাড এর ইনপুট অনুযায়ী গাড়ি মুভমেন্ট
-        let targetVX = padActive ? (padDX / padMaxRange) * 10 : (keys.a ? -8 : keys.d ? 8 : 0);
-        this.vx += (targetVX - this.vx) * 0.25;
-        this.x += this.vx; this.angle = this.vx * 0.04;
-        
-        if(this.x < 22) { this.x = 22; this.vx = 0; }
-        if(this.x > gameWidth - 22 - this.w) { this.x = gameWidth - 22 - this.w; this.vx = 0; }
-        
-        if(speed > 40 && Math.random() < 0.6) particles.push(new Particle(this.x + this.w/2, this.y + this.h, isNitro ? '#00f0ff' : '#ff0055', -speed*0.03, Math.random()*4+1));
-        this.y += ((gameHeight - 160) - this.y) * 0.05;
-    }
-    draw() {
-        ctx.save(); ctx.translate(this.x + this.w/2, this.y + this.h/2); ctx.rotate(this.angle);
-        ctx.shadowBlur = 20; ctx.shadowColor = isNitro ? '#00f0ff' : '#ff0055';
-        ctx.fillStyle = '#0a0a18'; ctx.strokeStyle = isNitro ? '#00f0ff' : '#ff0055'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.rect(-this.w/2, -this.h/2, this.w, this.h); ctx.fill(); ctx.stroke();
-        ctx.shadowBlur = 0; ctx.fillStyle = '#1a1a3a'; ctx.strokeStyle = '#8da1d6';
-        ctx.beginPath(); ctx.rect(-this.w/3, -this.h/6, (this.w/3)*2, this.h/2.5); ctx.fill(); ctx.stroke(); ctx.restore();
-    }
-}
-
-class Enemy {
-    constructor() {
-        this.w = 44; this.h = 85;
-        const lanes = [40, 140, 240, 340, 410];
-        this.x = lanes[Math.floor(Math.random() * lanes.length)] + (Math.random()*8 - 4);
-        this.y = -250; this.vShift = Math.random() * 3 + 2; 
-        this.color = ['#a200ff', '#00ff66', '#ff8800', '#ff00aa'][Math.floor(Math.random() * 4)];
-    }
-    update() { this.y += this.vShift + (speed * 0.08); }
-    draw() {
-        ctx.save(); ctx.shadowBlur = 15; ctx.shadowColor = this.color;
-        ctx.fillStyle = '#050510'; ctx.strokeStyle = this.color; ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.rect(this.x, this.y, this.w, this.h); ctx.fill(); ctx.stroke(); ctx.restore();
-    }
-}
-
-class Star {
-    constructor() {
-        this.r = 18; const lanes = [50, 150, 250, 350, 420];
-        this.x = lanes[Math.floor(Math.random() * lanes.length)]; this.y = -250; this.rot = 0;
-    }
-    update() { this.y += speed * 0.08; this.rot += 0.05; }
-    draw() {
-        ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.rot);
-        ctx.shadowBlur = 20; ctx.shadowColor = '#ffea00'; ctx.fillStyle = '#ffea00';
-        ctx.beginPath();
-        for (let i = 0; i < 5; i++) {
-            ctx.lineTo(Math.cos((18 + i * 72) * Math.PI / 180) * this.r, -Math.sin((18 + i * 72) * Math.PI / 180) * this.r);
-            ctx.lineTo(Math.cos((54 + i * 72) * Math.PI / 180) * (this.r/2), -Math.sin((54 + i * 72) * Math.PI / 180) * (this.r/2));
-        }
-        ctx.closePath(); ctx.fill(); ctx.restore();
-    }
-}
-
-class Particle {
-    constructor(x, y, color, vy, size) {
-        this.x = x; this.y = y; this.color = color;
-        this.vx = Math.random() * 4 - 2; this.vy = vy; this.alpha = 1; this.size = size;
-    }
-    update() { this.x += this.vx; this.y += this.vy; this.alpha -= 0.05; }
-    draw() {
-        ctx.save(); ctx.globalAlpha = this.alpha; ctx.fillStyle = this.color;
-        ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill(); ctx.restore();
-    }
-}
-
+// ─── GAME LOGIC ───
 function restartGame() {
     player = new Player();
     enemies = []; stars = []; particles = []; activeBullets = [];
     score = 0; speed = 0; nitro = 0; bullets = 0;
-    raceTimeLeft = 60; 
-    gameActive = true; screenFlash = 0;
-    resetPad(); updateAmmoUI();
+    raceTimeLeft = 60;
+    gameActive = true;
+    tpActive = false; tpTouchId = null;
+    screenFlash = 0;
+    resetPuck();
+    updateAmmoUI();
     document.getElementById('gameover-screen').classList.add('hidden');
     document.getElementById('leaderboard-box').style.display = 'none';
 
-    if(timerInterval) clearInterval(timerInterval);
+    if (timerInterval) clearInterval(timerInterval);
     timerInterval = setInterval(() => {
-        if(gameActive) {
+        if (gameActive) {
             raceTimeLeft--;
             document.getElementById('timer-txt').innerText = `${raceTimeLeft}s`;
-            if(raceTimeLeft <= 0) {
-                endRaceDuration();
-            }
+            if (raceTimeLeft <= 0) endRaceDuration();
         }
     }, 1000);
 }
@@ -438,36 +363,31 @@ function restartGame() {
 function endRaceDuration() {
     gameActive = false;
     clearInterval(timerInterval);
-    if(engineGain) engineGain.gain.setValueAtTime(0, audioCtx.currentTime);
-    
-    document.getElementById('gameover-title').innerText = "RACE FINISHED";
-    
-    let myKM = (score / 1000).toFixed(2);
-    document.getElementById('final-score-lbl').innerText = `YOUR FINAL SCORE: ${Math.floor(score)} (${myKM} KM)`;
-    
-    if(isMultiplayer && isHost) {
+    if (engineGain) engineGain.gain.setValueAtTime(0, audioCtx.currentTime);
+
+    const myKM = (score / 1000).toFixed(2);
+    document.getElementById('final-score-lbl').innerText = `SCORE: ${Math.floor(score)} · ${myKM} KM`;
+
+    if (isMultiplayer && isHost) {
         database.ref('car_rooms/' + currentRoom).update({ status: "finished" });
     }
-    
-    if(isMultiplayer) {
+
+    if (isMultiplayer) {
         showFinalLeaderboard();
     } else {
-        const box = document.getElementById('leaderboard-box');
+        const box  = document.getElementById('leaderboard-box');
         const list = document.getElementById('leaderboard-list');
-        list.innerHTML = `<li><strong style="color:#00f0ff;">${myName || 'Solo Driver'}</strong> - ${Math.floor(score)} pts (${myKM} KM)</li>`;
+        list.innerHTML = `<li><strong style="color:#00f0ff;">${myName||'Driver'}</strong> — ${Math.floor(score)} pts (${myKM} KM)</li>`;
         box.style.display = 'block';
     }
     document.getElementById('gameover-screen').classList.remove('hidden');
+    hud.style.display = 'none';
 }
 
 function backToLobby() {
-    if(isMultiplayer) {
-        if(isHost) {
-            let resetUpdates = { status: "waiting" };
-            Object.keys(opponentsData).forEach(id => {
-                resetUpdates[`players/${id}/score`] = 0;
-            });
-            database.ref('car_rooms/' + currentRoom).update(resetUpdates);
+    if (isMultiplayer) {
+        if (isHost) {
+            database.ref('car_rooms/' + currentRoom).update({ status: "waiting" });
         } else {
             document.getElementById('gameover-screen').classList.add('hidden');
             document.getElementById('waiting-screen').classList.remove('hidden');
@@ -478,167 +398,328 @@ function backToLobby() {
     }
 }
 
+function shootBullet() {
+    if (!gameActive || bullets <= 0) return;
+    bullets--;
+    playSfx(600, 'triangle', 0.15, 0.3);
+    activeBullets.push({ x: player.x + player.w / 2, y: player.y, w: 6, h: 22 });
+    updateAmmoUI();
+}
+
+function updateAmmoUI() {
+    ammoTxt.innerText = `${bullets} BULLETS`;
+    if (bullets <= 0) {
+        shootBtn.classList.add('empty');
+    } else {
+        shootBtn.classList.remove('empty');
+    }
+}
+
 function triggerCrash() {
-    screenShake = 30;
-    screenFlash = 0.5;
+    screenShake = 30; screenFlash = 0.5;
     playSfx(120, 'sawtooth', 0.5, 0.4);
-    score = Math.max(0, score - 800); 
+    score = Math.max(0, score - 800);
     speed = 0;
-    player.y = Math.min(gameHeight - 80, player.y + 120); 
+    player.y = Math.min(gameHeight - 80, player.y + 120);
+    resetPuck();
 }
 
 function showFinalLeaderboard() {
-    const box = document.getElementById('leaderboard-box');
+    const box  = document.getElementById('leaderboard-box');
     const list = document.getElementById('leaderboard-list');
     list.innerHTML = "";
     box.style.display = 'block';
 
-    let playersArr = Object.keys(opponentsData).map(id => opponentsData[id]);
-    playersArr.sort((a, b) => b.score - a.score);
-
-    playersArr.forEach((p, idx) => {
-        let pKM = (p.score / 1000).toFixed(2);
-        let li = document.createElement('li');
-        li.innerHTML = `<strong style="color:${p.color || '#fff'}">${p.name}</strong> - ${Math.floor(p.score)} pts <span style="color:#00ff66; font-size:0.9rem; margin-left:8px;">(${pKM} KM)</span>`;
+    const arr = Object.keys(opponentsData).map(id => opponentsData[id]);
+    arr.sort((a, b) => b.score - a.score);
+    arr.forEach(p => {
+        const pKM = (p.score / 1000).toFixed(2);
+        const li  = document.createElement('li');
+        li.innerHTML = `<strong style="color:${p.color||'#fff'}">${p.name}</strong> — ${Math.floor(p.score)} pts <span style="color:#00ff66;">(${pKM} KM)</span>`;
         list.appendChild(li);
     });
+    document.getElementById('gameover-screen').classList.remove('hidden');
+    hud.style.display = 'none';
+}
+
+// ─── GAME CLASSES ───
+class Player {
+    constructor() {
+        this.w = 40; this.h = 76;
+        this.x = gameWidth / 2 - this.w / 2;
+        this.y = gameHeight - 140;
+        this.vx = 0; this.angle = 0;
+    }
+    update() {
+        // Trackpad input
+        let targetVX = 0;
+        if (tpActive) {
+            targetVX = (tpDX / TP_RADIUS) * 9;
+        } else {
+            targetVX = keys.a ? -8 : keys.d ? 8 : 0;
+        }
+        this.vx += (targetVX - this.vx) * 0.25;
+        this.x  += this.vx;
+        this.angle = this.vx * 0.04;
+
+        if (this.x < 22) { this.x = 22; this.vx = 0; }
+        if (this.x > gameWidth - 22 - this.w) { this.x = gameWidth - 22 - this.w; this.vx = 0; }
+
+        if (speed > 40 && Math.random() < 0.6) {
+            particles.push(new Particle(
+                this.x + this.w/2, this.y + this.h,
+                isNitro ? '#00f0ff' : '#ff0055',
+                -speed * 0.03,
+                Math.random() * 4 + 1
+            ));
+        }
+        this.y += ((gameHeight - 140) - this.y) * 0.05;
+    }
+    draw() {
+        ctx.save();
+        ctx.translate(this.x + this.w/2, this.y + this.h/2);
+        ctx.rotate(this.angle);
+        ctx.shadowBlur = 20; ctx.shadowColor = isNitro ? '#00f0ff' : '#ff0055';
+        ctx.fillStyle = '#0a0a18'; ctx.strokeStyle = isNitro ? '#00f0ff' : '#ff0055'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.rect(-this.w/2, -this.h/2, this.w, this.h); ctx.fill(); ctx.stroke();
+        ctx.shadowBlur = 0; ctx.fillStyle = '#1a1a3a'; ctx.strokeStyle = '#8da1d6';
+        ctx.beginPath(); ctx.rect(-this.w/3, -this.h/6, (this.w/3)*2, this.h/2.5); ctx.fill(); ctx.stroke();
+        ctx.restore();
+    }
+}
+
+class Enemy {
+    constructor() {
+        this.w = 40; this.h = 76;
+        const lanes = [35, 120, 215, 310, 390];
+        this.x = lanes[Math.floor(Math.random() * lanes.length)] + (Math.random()*8 - 4);
+        this.y = -200; this.vShift = Math.random() * 3 + 2;
+        this.color = ['#a200ff','#00ff66','#ff8800','#ff00aa'][Math.floor(Math.random() * 4)];
+    }
+    update() { this.y += this.vShift + speed * 0.08; }
+    draw() {
+        ctx.save();
+        ctx.shadowBlur = 15; ctx.shadowColor = this.color;
+        ctx.fillStyle = '#050510'; ctx.strokeStyle = this.color; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.rect(this.x, this.y, this.w, this.h); ctx.fill(); ctx.stroke();
+        ctx.restore();
+    }
+}
+
+class Star {
+    constructor() {
+        this.r = 16;
+        const lanes = [45, 130, 225, 320, 405];
+        this.x = lanes[Math.floor(Math.random() * lanes.length)];
+        this.y = -200; this.rot = 0;
+    }
+    update() { this.y += speed * 0.08; this.rot += 0.05; }
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y); ctx.rotate(this.rot);
+        ctx.shadowBlur = 20; ctx.shadowColor = '#ffea00'; ctx.fillStyle = '#ffea00';
+        ctx.beginPath();
+        for (let i = 0; i < 5; i++) {
+            ctx.lineTo(Math.cos((18 + i*72) * Math.PI/180) * this.r,  -Math.sin((18 + i*72) * Math.PI/180) * this.r);
+            ctx.lineTo(Math.cos((54 + i*72) * Math.PI/180) * (this.r/2), -Math.sin((54 + i*72) * Math.PI/180) * (this.r/2));
+        }
+        ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+}
+
+class Particle {
+    constructor(x, y, color, vy, size) {
+        this.x = x; this.y = y; this.color = color;
+        this.vx = Math.random()*4 - 2; this.vy = vy;
+        this.alpha = 1; this.size = size;
+    }
+    update() { this.x += this.vx; this.y += this.vy; this.alpha -= 0.05; }
+    draw() {
+        ctx.save();
+        ctx.globalAlpha = this.alpha; ctx.fillStyle = this.color;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+    }
 }
 
 function drawOpponents() {
-    if(!isMultiplayer || !opponentsData) return;
-    for(let id in opponentsData) {
-        if(id === myId) continue; 
-        let opp = opponentsData[id];
-        let drawY = player.y - (opp.score - score) * 3;
-        
-        if(drawY > -300 && drawY < gameHeight + 100) {
+    if (!isMultiplayer || !opponentsData) return;
+    for (let id in opponentsData) {
+        if (id === myId) continue;
+        const opp  = opponentsData[id];
+        const drawY = player.y - (opp.score - score) * 3;
+        if (drawY > -300 && drawY < gameHeight + 100) {
             ctx.save();
-            ctx.translate(opp.x + 22, drawY + 42.5); 
+            ctx.translate(opp.x + 20, drawY + 38);
             ctx.globalAlpha = 0.5;
             ctx.shadowBlur = 20; ctx.shadowColor = opp.color || '#a200ff';
             ctx.fillStyle = '#0a0a18'; ctx.strokeStyle = opp.color || '#a200ff'; ctx.lineWidth = 3;
-            ctx.beginPath(); ctx.rect(-22, -42.5, 44, 85); ctx.fill(); ctx.stroke();
-            
-            ctx.globalAlpha = 0.8;
-            ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(opp.name, 0, -50);
+            ctx.beginPath(); ctx.rect(-20, -38, 40, 76); ctx.fill(); ctx.stroke();
+            ctx.globalAlpha = 0.85;
+            ctx.shadowBlur = 0; ctx.fillStyle = '#fff';
+            ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+            ctx.fillText(opp.name, 0, -46);
             ctx.restore();
         }
     }
 }
 
+// ─── RENDER LOOP ───
 function render() {
-    ctx.clearRect(0,0, gameWidth, gameHeight);
+    ctx.clearRect(0, 0, gameWidth, gameHeight);
     ctx.save();
 
-    if(screenShake > 0) {
+    if (screenShake > 0) {
         ctx.translate((Math.random()-0.5)*screenShake, (Math.random()-0.5)*screenShake);
-        screenShake *= 0.9; if(screenShake < 0.5) screenShake = 0;
+        screenShake *= 0.88;
+        if (screenShake < 0.5) screenShake = 0;
     }
 
-    if(gameActive) {
-        // ট্র্যাকপ্যাডের Y এক্সিস দিয়ে ওপরে ড্র্যাগ করলে নাইট্রো এবং নিচে ড্র্যাগ করলে ব্রেক হবে
-        let nitroReq = (padActive && padDY < -12) || keys.w;
-        let brakeReq = (padActive && padDY > 12) || keys.s; 
+    if (gameActive) {
+        const nitroReq = (tpActive && tpDY < -14) || keys.w;
+        const brakeReq = (tpActive && tpDY >  14) || keys.s;
         isNitro = nitroReq && nitro > 0;
-        
-        if(isNitro) { targetSpeed = 370; nitro -= 0.24; if(nitro < 0) nitro = 0; screenShake = Math.max(screenShake, 2.0); }
-        else if (brakeReq) targetSpeed = 60; else targetSpeed = 130; 
+
+        if (isNitro) {
+            targetSpeed = 370; nitro -= 0.24;
+            if (nitro < 0) nitro = 0;
+            screenShake = Math.max(screenShake, 2);
+            puck.classList.add('nitro-active');
+        } else if (brakeReq) {
+            targetSpeed = 60;
+            puck.classList.remove('nitro-active');
+        } else {
+            targetSpeed = 130;
+            puck.classList.remove('nitro-active');
+        }
 
         speed += (targetSpeed - speed) * 0.08;
-        score += (speed * 0.015);
-        roadOffset += (speed * 0.08);
+        score += speed * 0.015;
+        roadOffset += speed * 0.08;
 
-        if(engineOsc) engineOsc.frequency.setValueAtTime(40 + (speed/270)*140, audioCtx.currentTime);
+        if (engineOsc) engineOsc.frequency.setValueAtTime(40 + (speed/270)*140, audioCtx.currentTime);
 
-        document.getElementById('score-txt').innerText = String(Math.floor(score)).padStart(5, '0');
-        document.getElementById('speed-txt').innerText = `${Math.floor(speed)} KMH`;
-        document.getElementById('nitro-bar-fill').style.width = `${nitro}%`;
-        document.getElementById('nitro-percent-txt').innerText = `${Math.floor(nitro)}%`;
+        document.getElementById('score-txt').innerText = String(Math.floor(score)).padStart(5,'0');
+        document.getElementById('speed-txt').innerText = Math.floor(speed);
+        document.getElementById('nitro-fill').style.width  = `${nitro}%`;
+        document.getElementById('nitro-pct').innerText = `${Math.floor(nitro)}%`;
 
-        if(isMultiplayer && Date.now() - lastSyncTime > 100) {
+        if (isMultiplayer && Date.now() - lastSyncTime > 100) {
             database.ref('car_rooms/' + currentRoom + '/players/' + myId).update({
-                x: player.x,
-                score: score
+                x: player.x, score: score
             });
             lastSyncTime = Date.now();
         }
     } else {
         speed += (0 - speed) * 0.1;
-        roadOffset += (speed * 0.08);
+        roadOffset += speed * 0.08;
     }
 
+    // Draw road
     ctx.fillStyle = '#020206'; ctx.fillRect(0, 0, gameWidth, gameHeight);
-    ctx.fillStyle = '#060612'; ctx.fillRect(20, 0, gameWidth - 40, gameHeight); 
-    ctx.shadowBlur = 15; ctx.shadowColor = '#00f0ff'; ctx.fillStyle = '#00f0ff'; ctx.fillRect(18, 0, 4, gameHeight);
-    ctx.shadowColor = '#ff0055'; ctx.fillStyle = '#ff0055'; ctx.fillRect(gameWidth - 22, 0, 4, gameHeight);
+    ctx.fillStyle = '#060612'; ctx.fillRect(18, 0, gameWidth - 36, gameHeight);
+
+    // Road edge glow
+    ctx.shadowBlur = 12; ctx.shadowColor = '#00f0ff'; ctx.fillStyle = '#00f0ff';
+    ctx.fillRect(16, 0, 3, gameHeight);
+    ctx.shadowColor = '#ff0055'; ctx.fillStyle = '#ff0055';
+    ctx.fillRect(gameWidth - 19, 0, 3, gameHeight);
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-    let lineY = roadOffset % 80;
-    for(let y = -80; y < gameHeight; y += 80) {
-        ctx.fillRect(gameWidth * 0.25, y + lineY, 2, 40);
-        ctx.fillRect(gameWidth * 0.5 - 2, y + lineY, 4, 40);
-        ctx.fillRect(gameWidth * 0.75, y + lineY, 2, 40);
+
+    // Lane dashes
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    const lineY = roadOffset % 80;
+    for (let y = -80; y < gameHeight; y += 80) {
+        ctx.fillRect(gameWidth * 0.25, y + lineY, 2, 36);
+        ctx.fillRect(gameWidth * 0.50 - 1, y + lineY, 3, 36);
+        ctx.fillRect(gameWidth * 0.75, y + lineY, 2, 36);
     }
 
+    // Bullets
     ctx.save();
-    ctx.fillStyle = '#ffea00'; ctx.shadowBlur = 15; ctx.shadowColor = '#ffea00';
-    for(let i = activeBullets.length - 1; i >= 0; i--) {
-        let b = activeBullets[i]; b.y -= 18; ctx.fillRect(b.x - b.w/2, b.y, b.w, b.h);
-        for(let j = enemies.length - 1; j >= 0; j--) {
-            let e = enemies[j];
-            if(b.x > e.x && b.x < e.x + e.w && b.y > e.y && b.y < e.y + e.h) {
-                for(let k=0; k<25; k++) particles.push(new Particle(e.x + e.w/2, e.y + e.h/2, '#ff0055', (Math.random()-0.5)*12, Math.random()*5+2));
+    ctx.fillStyle = '#ffea00'; ctx.shadowBlur = 14; ctx.shadowColor = '#ffea00';
+    for (let i = activeBullets.length - 1; i >= 0; i--) {
+        const b = activeBullets[i];
+        b.y -= 18;
+        ctx.fillRect(b.x - b.w/2, b.y, b.w, b.h);
+        for (let j = enemies.length - 1; j >= 0; j--) {
+            const e = enemies[j];
+            if (b.x > e.x && b.x < e.x + e.w && b.y > e.y && b.y < e.y + e.h) {
+                for (let k = 0; k < 25; k++) {
+                    particles.push(new Particle(e.x + e.w/2, e.y + e.h/2, '#ff0055', (Math.random()-0.5)*12, Math.random()*5+2));
+                }
                 playSfx(300, 'sawtooth', 0.2, 0.25);
-                enemies.splice(j, 1); activeBullets.splice(i, 1); score += 100; break;
+                enemies.splice(j, 1); activeBullets.splice(i, 1);
+                score += 100; break;
             }
         }
-        if(b && b.y < -50) activeBullets.splice(i, 1);
+        if (activeBullets[i] && activeBullets[i].y < -50) activeBullets.splice(i, 1);
     }
     ctx.restore();
 
-    for(let i = particles.length - 1; i >= 0; i--) {
+    // Particles
+    for (let i = particles.length - 1; i >= 0; i--) {
         particles[i].update(); particles[i].draw();
-        if(particles[i].alpha <= 0) particles.splice(i,1);
+        if (particles[i].alpha <= 0) particles.splice(i, 1);
     }
 
-    if(gameActive && Math.random() < 0.015 && stars.length < 2) stars.push(new Star());
-    for(let i = stars.length - 1; i >= 0; i--) {
+    // Stars
+    if (gameActive && Math.random() < 0.015 && stars.length < 2) stars.push(new Star());
+    for (let i = stars.length - 1; i >= 0; i--) {
         stars[i].update(); stars[i].draw();
-        if(gameActive && player && Math.abs(player.x + player.w/2 - stars[i].x) < player.w/2 + stars[i].r && Math.abs(player.y + player.h/2 - stars[i].y) < player.h/2 + stars[i].r) {
-            nitro = Math.min(100, nitro + 20); bullets++; updateAmmoUI(); score += 150; playSfx(900, 'sine', 0.25, 0.3);
-            for(let k=0; k<15; k++) particles.push(new Particle(stars[i].x, stars[i].y, '#ffea00', (Math.random()-0.5)*8, Math.random()*4+2));
-            stars.splice(i, 1); continue;
+        if (gameActive && player) {
+            const px = player.x + player.w/2, py = player.y + player.h/2;
+            if (Math.abs(px - stars[i].x) < player.w/2 + stars[i].r &&
+                Math.abs(py - stars[i].y) < player.h/2 + stars[i].r) {
+                nitro = Math.min(100, nitro + 20);
+                bullets++;
+                updateAmmoUI();
+                score += 150;
+                playSfx(900, 'sine', 0.25, 0.3);
+                for (let k = 0; k < 15; k++) {
+                    particles.push(new Particle(stars[i].x, stars[i].y, '#ffea00', (Math.random()-0.5)*8, Math.random()*4+2));
+                }
+                stars.splice(i, 1); continue;
+            }
         }
-        if(stars[i].y > gameHeight + 100) stars.splice(i, 1);
+        if (stars[i].y > gameHeight + 100) stars.splice(i, 1);
     }
 
-    if(gameActive && Math.random() < 0.038 && enemies.length < 5) enemies.push(new Enemy());
-    for(let i = enemies.length - 1; i >= 0; i--) {
+    // Enemies
+    if (gameActive && Math.random() < 0.038 && enemies.length < 5) enemies.push(new Enemy());
+    for (let i = enemies.length - 1; i >= 0; i--) {
         enemies[i].update(); enemies[i].draw();
-        if(gameActive && player && player.x < enemies[i].x + enemies[i].w - 5 && player.x + player.w > enemies[i].x + 5 && player.y < enemies[i].y + enemies[i].h - 5 && player.y + player.h > enemies[i].y + 6) {
+        if (gameActive && player &&
+            player.x < enemies[i].x + enemies[i].w - 5 &&
+            player.x + player.w > enemies[i].x + 5 &&
+            player.y < enemies[i].y + enemies[i].h - 5 &&
+            player.y + player.h > enemies[i].y + 6) {
             triggerCrash();
             enemies.splice(i, 1); continue;
         }
-        if(enemies[i].y > gameHeight + 100) { enemies.splice(i, 1); if(gameActive) score += 30; }
+        if (enemies[i].y > gameHeight + 100) {
+            enemies.splice(i, 1);
+            if (gameActive) score += 30;
+        }
     }
 
     drawOpponents();
 
-    if(player) {
-        if(gameActive) player.update();
+    if (player) {
+        if (gameActive) player.update();
         player.draw();
     }
 
     if (screenFlash > 0) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${screenFlash})`;
-        ctx.fillRect(0, 0, gameWidth, gameHeight); screenFlash -= 0.05;
+        ctx.fillStyle = `rgba(255,255,255,${screenFlash})`;
+        ctx.fillRect(0, 0, gameWidth, gameHeight);
+        screenFlash -= 0.05;
     }
 
     ctx.restore();
     requestAnimationFrame(render);
 }
 
+// ─── INIT ───
 player = new Player();
 requestAnimationFrame(render);
