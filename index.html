@@ -12,15 +12,11 @@
 
 <div id="app-wrapper">
 
-    <!-- ═══════ GAME VIEWPORT (TOP) ═══════ -->
+    <!-- ═══════════════ GAME VIEWPORT (TOP) ═══════════════ -->
     <div id="game-viewport">
         <canvas id="canvas"></canvas>
 
-        <!-- SHOOT buttons — pinned to left/right sides of game screen -->
-        <div id="shoot-btn-left"  class="side-shoot empty" ontouchstart="shootBullet();event.preventDefault();">💥</div>
-        <div id="shoot-btn-right" class="side-shoot empty" ontouchstart="shootBullet();event.preventDefault();">💥</div>
-
-        <!-- HUD -->
+        <!-- HUD overlays on canvas -->
         <div id="hud">
             <div class="hud-top">
                 <div class="hud-pill">
@@ -54,25 +50,29 @@
             </div>
         </div>
 
-        <!-- Overlays -->
+        <!-- Overlays (start / waiting / gameover) -->
         <div id="start-screen" class="overlay">
             <div class="overlay-inner">
                 <div class="game-logo">
                     <div class="logo-main">NEON<br>DRIVE</div>
                     <div class="logo-sub">MULTIPLAYER EDITION</div>
                 </div>
+
                 <div class="lobby-card">
                     <div class="card-label">CREATE RACE</div>
                     <input type="text" id="host-name" class="field" placeholder="Host Name" autocomplete="off">
                     <button class="btn-neon" onclick="createRoom()">CREATE ROOM</button>
                 </div>
+
                 <div class="divider-or">— OR —</div>
+
                 <div class="lobby-card">
                     <div class="card-label">JOIN RACE</div>
                     <input type="text" id="joiner-name" class="field" placeholder="Player Name" autocomplete="off">
                     <input type="text" id="room-code-input" class="field" placeholder="4-Digit Room Code" autocomplete="off">
                     <button class="btn-neon btn-join" onclick="joinRoom()">JOIN ROOM</button>
                 </div>
+
                 <button class="btn-ghost" onclick="playSolo()">Solo Practice</button>
                 <div class="footer-credit">Designed by Imrul Hasan · AI: Gemini</div>
             </div>
@@ -80,11 +80,15 @@
 
         <div id="waiting-screen" class="overlay hidden">
             <div class="overlay-inner">
-                <div class="room-badge">ROOM <span id="display-room-code"></span></div>
+                <div class="room-badge">
+                    ROOM <span id="display-room-code"></span>
+                </div>
                 <div class="wait-sub">WAITING FOR DRIVERS</div>
-                <div class="lobby-card" style="height:90px;overflow-y:auto;">
+
+                <div class="lobby-card" style="height:100px; overflow-y:auto;">
                     <ul id="players-list"></ul>
                 </div>
+
                 <div class="lobby-card chat-card">
                     <div id="chat-messages"></div>
                     <div class="chat-row">
@@ -92,6 +96,7 @@
                         <button class="chat-send-btn" onclick="sendChatMessage()">▶</button>
                     </div>
                 </div>
+
                 <button id="btn-start" class="btn-neon btn-start-race" onclick="startMultiplayerGame()" style="display:none;">START RACE ▶</button>
                 <div id="waiting-msg">Waiting for host to start...</div>
                 <div class="footer-credit">Designed by Imrul Hasan · AI: Gemini</div>
@@ -102,44 +107,53 @@
             <div class="overlay-inner">
                 <div id="gameover-title" class="go-title">RACE FINISHED</div>
                 <div id="final-score-lbl" class="go-score"></div>
-                <div id="leaderboard-box" style="display:none;width:100%;">
+
+                <div id="leaderboard-box" style="display:none; width:100%;">
                     <div class="lb-header">🏁 FINAL STANDINGS 🏁</div>
                     <ol id="leaderboard-list"></ol>
                 </div>
+
                 <button class="btn-neon" onclick="backToLobby()">BACK TO LOBBY</button>
                 <div class="footer-credit">Designed by Imrul Hasan · AI: Gemini</div>
             </div>
         </div>
     </div>
 
-    <!-- ═══════ CONTROLLER PANEL (BOTTOM) ═══════ -->
+    <!-- ═══════════════ CONTROLLER PANEL (BOTTOM) ═══════════════ -->
     <div id="ctrl-panel">
-        <div class="ctrl-meta">
+        <!-- AMMO display -->
+        <div id="ammo-display">
             <div class="ammo-icon">⬆</div>
-            <div id="ammo-count-txt" class="ammo-txt">0</div>
-            <div class="ammo-sub">BULLETS</div>
+            <div id="ammo-count-txt" class="ammo-txt">0 BULLETS</div>
         </div>
 
+        <!-- Central track-pad controller -->
         <div id="trackpad-wrap">
             <div id="trackpad">
+                <!-- 3 lane lines (visual) -->
                 <div class="track-line"></div>
                 <div class="track-line"></div>
                 <div class="track-line"></div>
+
+                <!-- Arrow hints -->
                 <div class="arrow-hint ah-up">▲</div>
                 <div class="arrow-hint ah-down">▼</div>
                 <div class="arrow-hint ah-left">◀</div>
                 <div class="arrow-hint ah-right">▶</div>
+
+                <!-- The draggable puck -->
                 <div id="ctrl-puck">
-                    <div class="puck-inner"><div class="puck-car">🚗</div></div>
+                    <div class="puck-inner">
+                        <div class="puck-car">🚗</div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="ctrl-meta">
-            <div id="shoot-btn" class="shoot-btn-ctrl empty" ontouchstart="shootBullet();event.preventDefault();">
-                <div class="shoot-icon">💥</div>
-                <div class="shoot-lbl">FIRE</div>
-            </div>
+        <!-- SHOOT button -->
+        <div id="shoot-btn" class="shoot-btn-ctrl empty" ontouchstart="shootBullet(); event.preventDefault();">
+            <div class="shoot-icon">💥</div>
+            <div class="shoot-lbl">SHOOT</div>
         </div>
     </div>
 
